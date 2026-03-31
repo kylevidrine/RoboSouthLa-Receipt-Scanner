@@ -1,0 +1,7 @@
+{
+  "name": "Receipt Scanner Pro",
+  "description": "Smart receipt and invoice scanner with automatic edge detection and iOS-inspired dark interface.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
