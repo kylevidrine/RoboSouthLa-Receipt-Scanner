@@ -44,7 +44,7 @@ app.use(
 // OAuth Routes
 app.get("/api/auth/url", (req, res) => {
   const clientRedirectUri = req.query.redirectUri as string;
-  const redirectUri = clientRedirectUri || `${process.env.APP_URL}/auth/callback`;
+  const redirectUri = clientRedirectUri || `${process.env.APP_URL}/auth/google/callback`;
   
   // Store the redirectUri in the session to use it in the callback
   if (req.session) {
@@ -66,9 +66,9 @@ app.get("/api/auth/url", (req, res) => {
   res.json({ url: authUrl });
 });
 
-app.get(["/auth/callback", "/auth/callback/"], async (req, res) => {
+app.get(["/auth/google/callback", "/auth/google/callback/"], async (req, res) => {
   const { code } = req.query;
-  const redirectUri = req.session?.oauthRedirectUri || `${process.env.APP_URL}/auth/callback`;
+  const redirectUri = req.session?.oauthRedirectUri || `${process.env.APP_URL}/auth/google/callback`;
 
   console.log("Handling Callback with redirectUri:", redirectUri);
 
