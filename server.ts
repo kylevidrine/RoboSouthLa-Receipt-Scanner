@@ -9,6 +9,9 @@ import fs from "fs";
 const app = express();
 const PORT = 3000;
 
+// Trust reverse proxy (NGINX) for secure connections
+app.set('trust proxy', 1);
+
 // Simple local storage for receipts (in-memory for now, could use a file)
 let receipts: any[] = [];
 const RECEIPTS_FILE = path.join(process.cwd(), "receipts.json");
