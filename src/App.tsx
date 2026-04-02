@@ -174,8 +174,8 @@ export default function App() {
     let lastCorners: Point[] | null = null;
     let captureCalled = false;
 
-    const STABLE_FRAMES = 30;
-    const STABILITY_PX = 10; // max per-corner drift to count as stable
+    const STABLE_FRAMES = 20;
+    const STABILITY_PX = 20; // max per-corner drift to count as stable
 
     const drawGuide = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
       const m = w * 0.08;
@@ -237,7 +237,7 @@ export default function App() {
 
         cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
-        const minArea = procCanvas.width * procCanvas.height * 0.20;
+        const minArea = procCanvas.width * procCanvas.height * 0.15;
         const scaleX  = overlay.width  / procCanvas.width;
         const scaleY  = overlay.height / procCanvas.height;
 
@@ -249,22 +249,26 @@ export default function App() {
           const area = cv.contourArea(cnt);
 
           if (area > minArea && area > bestArea) {
-            const peri   = cv.arcLength(cnt, true);
-            const approx = new cv.Mat();
-            cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
-
-            if (approx.rows === 4 && cv.isContourConvex(approx)) {
-              const corners: Point[] = [];
-              for (let j = 0; j < 4; j++) {
-                corners.push({
-                  x: approx.data32S[j * 2]     * scaleX,
-                  y: approx.data32S[j * 2 + 1] * scaleY,
-                });
+            const peri = cv.arcLength(cnt, true);
+            // Try progressively looser epsilon until we get a quad
+            for (const eps of [0.02, 0.03, 0.05]) {
+              const approx = new cv.Mat();
+              cv.approxPolyDP(cnt, approx, eps * peri, true);
+              if (approx.rows === 4) {
+                const corners: Point[] = [];
+                for (let j = 0; j < 4; j++) {
+                  corners.push({
+                    x: approx.data32S[j * 2]     * scaleX,
+                    y: approx.data32S[j * 2 + 1] * scaleY,
+                  });
+                }
+                bestCorners = corners;
+                bestArea    = area;
+                approx.delete();
+                break;
               }
-              bestCorners = corners;
-              bestArea    = area;
+              approx.delete();
             }
-            approx.delete();
           }
           cnt.delete();
         }
@@ -528,7 +532,7 @@ export default function App() {
         
         {/* Scanner View */}
         {view === 'scanner' && (
-          <div className="absolute inset-0 flex flex-col">
+          <div className="absolute inset-0 flex flex-col min-h-0">
             {!capturedImage ? (
               <>
                 <video 
@@ -583,16 +587,13 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className={`w-64 h-96 border-2 rounded-2xl relative overflow-hidden transition-colors duration-300 ${isFocused ? 'border-green-500' : 'border-white/30'}`}>
-                    <div className={`absolute inset-0 animate-scan ${isFocused ? 'bg-green-500/10' : 'bg-blue-500/10'}`} />
-                    {!isFocused && (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <span className="text-[10px] font-bold tracking-widest uppercase opacity-50">Focusing...</span>
-                      </div>
-                    )}
+                {!isFocused && cvReady && (
+                  <div className="absolute bottom-32 left-0 right-0 flex justify-center pointer-events-none z-20">
+                    <span className="text-[11px] font-bold tracking-widest uppercase text-white/50 bg-black/40 px-4 py-2 rounded-full">
+                      Point at a document
+                    </span>
                   </div>
-                </div>
+                )}
 
                 <div className="absolute bottom-0 left-0 right-0 p-12 pb-24 flex justify-center items-center z-30 bg-gradient-to-t from-black/80 to-transparent">
                   <button 
@@ -618,18 +619,18 @@ export default function App() {
                 )}
               </>
             ) : (
-              <div className="absolute inset-0 bg-black flex flex-col">
-                <div className="flex-1 relative p-4 flex flex-col">
+              <div className="flex flex-col w-full h-full bg-black">
+                <div className="flex-1 min-h-0 p-4 flex flex-col">
                   <div className="text-center mb-4 mt-4">
                     <h2 className="text-xl font-bold">Is the quality good?</h2>
                     <p className="text-sm text-ios-gray mt-1 px-8">Ensure the receipt is clean and all text is clearly readable before saving.</p>
                   </div>
-                  <div className="flex-1 relative">
+                  <div className="flex-1 min-h-0">
                     <img src={capturedImage} className="w-full h-full object-contain rounded-2xl shadow-2xl" alt="Captured" />
                   </div>
                 </div>
-                <div className="p-10 pb-16 glass flex justify-around items-center z-40">
-                  <button 
+                <div className="flex-shrink-0 px-10 py-6 glass flex justify-around items-center">
+                  <button
                     onClick={() => setCapturedImage(null)}
                     className="flex flex-col items-center gap-3 text-white ios-btn-active"
                   >
@@ -638,7 +639,7 @@ export default function App() {
                     </div>
                     <span className="text-sm font-bold">Retake</span>
                   </button>
-                  <button 
+                  <button
                     onClick={() => {
                       if (capturedImage) {
                         downloadImage(capturedImage, `Receipt_${Date.now()}`);
@@ -651,7 +652,7 @@ export default function App() {
                     </div>
                     <span className="text-sm font-bold">Save</span>
                   </button>
-                  <button 
+                  <button
                     onClick={saveReceipt}
                     className="flex flex-col items-center gap-3 text-white ios-btn-active"
                   >
