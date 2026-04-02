@@ -51,10 +51,30 @@ export default function App() {
   const [isDemoMode, setIsDemoMode] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
 
+  const [cvReady, setCvReady] = useState(false);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  // Off-screen canvas used for OpenCV processing (scaled down for perf)
+  const procCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // Wait for OpenCV.js WASM to finish initializing
+  useEffect(() => {
+    if (!procCanvasRef.current) {
+      procCanvasRef.current = document.createElement('canvas');
+    }
+    const check = () => {
+      const cv = (window as any).cv;
+      if (cv && typeof cv.Mat === 'function') {
+        setCvReady(true);
+      } else {
+        setTimeout(check, 250);
+      }
+    };
+    check();
+  }, []);
 
   // Auth State
   useEffect(() => {
@@ -141,78 +161,161 @@ export default function App() {
     };
   }, [view, capturedImage, startCamera, user, isDemoMode]);
 
-  // Edge Detection Simulation & Auto-Capture Logic
+  // Real OpenCV edge detection & auto-capture
   useEffect(() => {
-    if (view !== 'scanner' || capturedImage || !isAutoCapture || (!user && !isDemoMode)) return;
+    if (view !== 'scanner' || capturedImage || !isAutoCapture || (!user && !isDemoMode) || !cvReady) return;
+
+    const cv = (window as any).cv;
+    const procCanvas = procCanvasRef.current;
+    if (!cv || !procCanvas) return;
 
     let animationFrameId: number;
-    let detectionCounter = 0;
-    let focusCounter = 0;
-    const DETECTION_THRESHOLD = 45; 
-    const FOCUS_THRESHOLD = 15; 
+    let stableFrameCount = 0;
+    let lastCorners: Point[] | null = null;
+    let captureCalled = false;
+
+    const STABLE_FRAMES = 30;
+    const STABILITY_PX = 10; // max per-corner drift to count as stable
+
+    const drawGuide = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
+      const m = w * 0.08;
+      const gw = w - m * 2;
+      const gh = gw * 1.4;
+      const gy = (h - gh) / 2;
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([20, 10]);
+      ctx.strokeRect(m, gy, gw, gh);
+      ctx.setLineDash([]);
+    };
 
     const processFrame = () => {
-      if (!videoRef.current || !overlayCanvasRef.current) return;
-
       const video = videoRef.current;
-      const canvas = overlayCanvasRef.current;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
+      const overlay = overlayCanvasRef.current;
 
-      if (canvas.width !== video.clientWidth || canvas.height !== video.clientHeight) {
-        canvas.width = video.clientWidth;
-        canvas.height = video.clientHeight;
+      if (!video || !overlay || video.readyState < 2 || video.videoWidth === 0) {
+        animationFrameId = requestAnimationFrame(processFrame);
+        return;
       }
 
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      const margin = canvas.width * 0.15;
-      const w = canvas.width - margin * 2;
-      const h = w * 1.4; 
-      const y = (canvas.height - h) / 2;
-
-      const jitter = Math.sin(Date.now() / 200) * 2;
-      const currentJitter = Math.abs(jitter);
-      
-      if (currentJitter < 1.5) {
-        focusCounter++;
-      } else {
-        focusCounter = 0;
+      // Keep overlay matched to rendered video size
+      if (overlay.width !== video.clientWidth || overlay.height !== video.clientHeight) {
+        overlay.width = video.clientWidth;
+        overlay.height = video.clientHeight;
       }
-      
-      const focused = focusCounter > FOCUS_THRESHOLD;
-      setIsFocused(focused);
 
-      ctx.strokeStyle = focused ? '#34c759' : '#0a84ff'; 
-      ctx.lineWidth = 3;
-      ctx.setLineDash(focused ? [] : [20, 10]); 
-      
-      const corners = [
-        { x: margin + jitter, y: y + jitter },
-        { x: margin + w - jitter, y: y - jitter },
-        { x: margin + w + jitter, y: y + h + jitter },
-        { x: margin - jitter, y: y + h - jitter }
-      ];
+      // Scale video down for fast processing (~640px wide)
+      const PROC_W = 640;
+      const scale = PROC_W / video.videoWidth;
+      procCanvas.width = PROC_W;
+      procCanvas.height = Math.round(video.videoHeight * scale);
 
-      ctx.beginPath();
-      ctx.moveTo(corners[0].x, corners[0].y);
-      ctx.lineTo(corners[1].x, corners[1].y);
-      ctx.lineTo(corners[2].x, corners[2].y);
-      ctx.lineTo(corners[3].x, corners[3].y);
-      ctx.closePath();
-      ctx.stroke();
+      const pCtx = procCanvas.getContext('2d', { willReadFrequently: true });
+      if (!pCtx) { animationFrameId = requestAnimationFrame(processFrame); return; }
+      pCtx.drawImage(video, 0, 0, procCanvas.width, procCanvas.height);
 
-      ctx.fillStyle = focused ? 'rgba(52, 199, 89, 0.1)' : 'rgba(10, 132, 255, 0.1)';
-      ctx.fill();
+      const ctx = overlay.getContext('2d');
+      if (!ctx) { animationFrameId = requestAnimationFrame(processFrame); return; }
 
-      if (focused) {
-        detectionCounter++;
-        if (detectionCounter > DETECTION_THRESHOLD) {
-          handleCapture();
-          detectionCounter = 0;
+      let src: any, gray: any, blurred: any, edges: any,
+          contours: any, hierarchy: any, kernel: any;
+      try {
+        src       = cv.imread(procCanvas);
+        gray      = new cv.Mat();
+        blurred   = new cv.Mat();
+        edges     = new cv.Mat();
+        contours  = new cv.MatVector();
+        hierarchy = new cv.Mat();
+
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+        cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+        cv.Canny(blurred, edges, 50, 150);
+
+        // Dilate slightly to close edge gaps
+        kernel = cv.Mat.ones(3, 3, cv.CV_8U);
+        cv.dilate(edges, edges, kernel);
+
+        cv.findContours(edges, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+
+        const minArea = procCanvas.width * procCanvas.height * 0.20;
+        const scaleX  = overlay.width  / procCanvas.width;
+        const scaleY  = overlay.height / procCanvas.height;
+
+        let bestCorners: Point[] | null = null;
+        let bestArea = 0;
+
+        for (let i = 0; i < contours.size(); i++) {
+          const cnt  = contours.get(i);
+          const area = cv.contourArea(cnt);
+
+          if (area > minArea && area > bestArea) {
+            const peri   = cv.arcLength(cnt, true);
+            const approx = new cv.Mat();
+            cv.approxPolyDP(cnt, approx, 0.02 * peri, true);
+
+            if (approx.rows === 4 && cv.isContourConvex(approx)) {
+              const corners: Point[] = [];
+              for (let j = 0; j < 4; j++) {
+                corners.push({
+                  x: approx.data32S[j * 2]     * scaleX,
+                  y: approx.data32S[j * 2 + 1] * scaleY,
+                });
+              }
+              bestCorners = corners;
+              bestArea    = area;
+            }
+            approx.delete();
+          }
+          cnt.delete();
         }
-      } else {
-        detectionCounter = 0;
+
+        ctx.clearRect(0, 0, overlay.width, overlay.height);
+
+        if (bestCorners) {
+          const isStable = lastCorners !== null && lastCorners.every((pt, i) => {
+            const dx = pt.x - bestCorners![i].x;
+            const dy = pt.y - bestCorners![i].y;
+            return Math.sqrt(dx * dx + dy * dy) < STABILITY_PX;
+          });
+
+          stableFrameCount = isStable ? stableFrameCount + 1 : 0;
+          lastCorners      = bestCorners;
+
+          const stable = stableFrameCount >= STABLE_FRAMES;
+          setIsFocused(stable);
+
+          ctx.strokeStyle = stable ? '#34c759' : '#0a84ff';
+          ctx.lineWidth   = 3;
+          ctx.setLineDash(stable ? [] : [10, 5]);
+          ctx.beginPath();
+          ctx.moveTo(bestCorners[0].x, bestCorners[0].y);
+          for (let i = 1; i < 4; i++) ctx.lineTo(bestCorners[i].x, bestCorners[i].y);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.fillStyle = stable ? 'rgba(52,199,89,0.15)' : 'rgba(10,132,255,0.15)';
+          ctx.fill();
+          ctx.setLineDash([]);
+
+          if (stable && !captureCalled) {
+            captureCalled = true;
+            handleCapture();
+          }
+        } else {
+          stableFrameCount = 0;
+          lastCorners      = null;
+          setIsFocused(false);
+          drawGuide(ctx, overlay.width, overlay.height);
+        }
+      } catch (err) {
+        console.error('OpenCV frame error:', err);
+      } finally {
+        src?.delete();
+        gray?.delete();
+        blurred?.delete();
+        edges?.delete();
+        contours?.delete();
+        hierarchy?.delete();
+        kernel?.delete();
       }
 
       animationFrameId = requestAnimationFrame(processFrame);
@@ -220,7 +323,7 @@ export default function App() {
 
     animationFrameId = requestAnimationFrame(processFrame);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [view, capturedImage, isAutoCapture, user, isDemoMode]);
+  }, [view, capturedImage, isAutoCapture, user, isDemoMode, cvReady]);
 
   const handleCapture = () => {
     if (isCapturing || capturedImage || isProcessing) return;
