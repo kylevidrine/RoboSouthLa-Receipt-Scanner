@@ -379,8 +379,6 @@ export default function App() {
     console.log('[saveReceipt] JWT present:', !!token, token ? `(${token.slice(0, 20)}...)` : '(none)');
 
     const name = `Receipt ${new Date().toLocaleDateString()}`;
-    downloadImage(capturedImage, name);
-
     const newReceipt = { image: capturedImage, name };
 
     try {
@@ -396,11 +394,16 @@ export default function App() {
       if (!response.ok) {
         const text = await response.text();
         console.error('[saveReceipt] save failed — body:', text);
+        alert(`Save failed (${response.status}): ${text}`);
         return;
       }
 
       const saved: Receipt = await response.json();
       console.log('[saveReceipt] saved receipt id:', saved.id);
+
+      // Download after confirmed save so it doesn't interrupt the fetch on iOS
+      downloadImage(capturedImage, name);
+
       setCapturedImage(null);
       setView('gallery');
 
@@ -418,6 +421,7 @@ export default function App() {
       }).catch(err => console.error('Webhook error:', err));
     } catch (error) {
       console.error('[saveReceipt] exception:', error);
+      alert(`Save error: ${error}`);
     }
   };
 
