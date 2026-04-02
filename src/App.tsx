@@ -621,7 +621,7 @@ export default function App() {
           transition={{ delay: 0.2 }}
           className="text-ios-gray mb-12 max-w-xs text-lg"
         >
-          Smart edge detection and automatic capture for your invoices and receipts.
+          Snap a receipt. Let AI handle the rest
         </motion.p>
         
         <div className="w-full max-w-xs flex flex-col gap-4">
