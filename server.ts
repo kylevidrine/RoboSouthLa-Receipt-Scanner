@@ -8,10 +8,10 @@ import fs from "fs";
 
 const app = express();
 const PORT = 3000;
+const REDIRECT_URI = "https://receipt.robosouthla.com/auth/google/callback";
 
 app.set("trust proxy", 1);
 
-// Simple local storage for receipts (in-memory for now, could use a file)
 let receipts: any[] = [];
 const RECEIPTS_FILE = path.join(process.cwd(), "receipts.json");
 
@@ -36,34 +36,17 @@ app.use(
   cookieSession({
     name: "session",
     keys: [process.env.GOOGLE_CLIENT_SECRET || "robo-secret-key"],
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    secure: true, // Always true since we're behind a proxy with SSL
-    sameSite: "none", // Required for AI Studio iframe, works for standalone too
+    maxAge: 24 * 60 * 60 * 1000,
+    secure: true,
+    sameSite: "none",
     httpOnly: true,
   })
 );
 
-// OAuth Routes
 app.get("/api/auth/url", (req, res) => {
-  console.log("ALL HEADERS:", JSON.stringify(req.headers, null, 2));
-  const clientRedirectUri = req.query.redirectUri as string;
-  
-  // Robust fallback for redirectUri
-  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-  const host = req.headers["x-forwarded-host"] || req.get("host");
-  const fallbackRedirectUri = `${protocol}://${host}/auth/google/callback`;
-  const redirectUri = clientRedirectUri || fallbackRedirectUri;
-  
-  // Store the redirectUri in the session to use it in the callback
-  if (req.session) {
-    req.session.oauthRedirectUri = redirectUri;
-  }
-
-  console.log("Generating Auth URL with redirectUri:", redirectUri);
-
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,
-    redirect_uri: redirectUri,
+    redirect_uri: REDIRECT_URI,
     response_type: "code",
     scope: "openid email profile",
     access_type: "offline",
@@ -76,25 +59,13 @@ app.get("/api/auth/url", (req, res) => {
 
 app.get(["/auth/google/callback", "/auth/google/callback/"], async (req, res) => {
   const { code } = req.query;
-  
-  // Robust fallback for redirectUri if session is lost
-  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
-  const host = req.headers["x-forwarded-host"] || req.get("host");
-  const fallbackRedirectUri = `${protocol}://${host}/auth/google/callback`;
-  const redirectUri = req.session?.oauthRedirectUri || fallbackRedirectUri;
-
-  console.log("Handling Callback with redirectUri:", redirectUri);
-
-  if (!req.session) {
-    console.error("CRITICAL: req.session is undefined in OAuth callback. Check cookie-session config.");
-  }
 
   try {
     const tokenResponse = await axios.post("https://oauth2.googleapis.com/token", {
       code,
       client_id: process.env.GOOGLE_CLIENT_ID,
       client_secret: process.env.GOOGLE_CLIENT_SECRET,
-      redirect_uri: redirectUri,
+      redirect_uri: REDIRECT_URI,
       grant_type: "authorization_code",
     });
 
@@ -135,7 +106,6 @@ app.post("/api/auth/logout", (req, res) => {
   res.json({ success: true });
 });
 
-// Receipt API Routes
 app.get("/api/receipts", (req, res) => {
   if (!req.session?.user) return res.status(401).json({ error: "Unauthorized" });
   const userReceipts = receipts.filter((r) => r.uid === req.session!.user.id);
