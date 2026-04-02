@@ -38,7 +38,7 @@ app.use(
     keys: [process.env.GOOGLE_CLIENT_SECRET || "robo-secret-key"],
     maxAge: 24 * 60 * 60 * 1000,
     secure: true,
-    sameSite: "none",
+    sameSite: "lax",
     httpOnly: true,
   })
 );
@@ -75,6 +75,7 @@ app.get(["/auth/google/callback", "/auth/google/callback/"], async (req, res) =>
     });
 
     req.session!.user = userResponse.data;
+    console.log("Session set for user:", userResponse.data.email);
 
     res.send(`
       <html>
@@ -98,6 +99,7 @@ app.get(["/auth/google/callback", "/auth/google/callback/"], async (req, res) =>
 });
 
 app.get("/api/auth/me", (req, res) => {
+  console.log("Checking auth for session:", req.session?.user?.email || "No user");
   res.json({ user: req.session?.user || null });
 });
 

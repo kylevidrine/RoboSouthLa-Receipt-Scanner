@@ -45,7 +45,7 @@ export default function App() {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        const response = await fetch('/api/auth/me');
+        const response = await fetch('/api/auth/me', { credentials: 'include' });
         const data = await response.json();
         setUser(data.user);
       } catch (error) {
@@ -59,7 +59,8 @@ export default function App() {
 
     const handleMessage = (event: MessageEvent) => {
       if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        checkAuth();
+        // Small delay to ensure cookie is settled
+        setTimeout(() => checkAuth(), 500);
       }
     };
 
@@ -76,7 +77,7 @@ export default function App() {
 
     const fetchReceipts = async () => {
       try {
-        const response = await fetch('/api/receipts');
+        const response = await fetch('/api/receipts', { credentials: 'include' });
         if (response.ok) {
           const data = await response.json();
           setReceipts(data.sort((a: Receipt, b: Receipt) => b.timestamp - a.timestamp));
@@ -259,7 +260,8 @@ export default function App() {
       const response = await fetch('/api/receipts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newReceipt)
+        body: JSON.stringify(newReceipt),
+        credentials: 'include'
       });
       
       if (response.ok) {
@@ -274,7 +276,8 @@ export default function App() {
   const deleteReceipt = async (id: string) => {
     try {
       const response = await fetch(`/api/receipts/${id}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        credentials: 'include'
       });
       
       if (response.ok) {
@@ -338,7 +341,7 @@ export default function App() {
   const handleLogin = async () => {
     try {
       const redirectUri = `${window.location.origin}/auth/google/callback`;
-      const response = await fetch(`/api/auth/url?redirectUri=${encodeURIComponent(redirectUri)}`);
+      const response = await fetch(`/api/auth/url?redirectUri=${encodeURIComponent(redirectUri)}`, { credentials: 'include' });
       const { url } = await response.json();
       window.open(url, 'google_oauth', 'width=600,height=700');
     } catch (error) {
@@ -348,7 +351,10 @@ export default function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
+      await fetch('/api/auth/logout', { 
+        method: 'POST',
+        credentials: 'include'
+      });
       setUser(null);
       setView('scanner');
     } catch (error) {
