@@ -408,17 +408,20 @@ export default function App() {
       setView('gallery');
 
       // Fire-and-forget webhook — don't block the UI
+      const webhookPayload = {
+        email: user.email,
+        username: user.name,
+        image: saved.image,
+        timestamp: saved.timestamp,
+        receiptId: saved.id,
+      };
+      console.log('[webhook] sending payload:', { ...webhookPayload, image: webhookPayload.image.slice(0, 50) + '...' });
       fetch('https://n8n.robosouthla.com/webhook/receipt-app', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: user.email,
-          username: user.name,
-          image: saved.image,
-          timestamp: saved.timestamp,
-          receiptId: saved.id,
-        }),
-      }).catch(err => console.error('Webhook error:', err));
+        body: JSON.stringify(webhookPayload),
+      }).then(r => console.log('[webhook] response status:', r.status))
+        .catch(err => console.error('[webhook] error:', err));
     } catch (error) {
       console.error('[saveReceipt] exception:', error);
       alert(`Save error: ${error}`);
