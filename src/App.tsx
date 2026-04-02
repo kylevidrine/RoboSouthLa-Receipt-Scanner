@@ -340,8 +340,7 @@ export default function App() {
 
   const handleLogin = async () => {
     try {
-      const redirectUri = `${window.location.origin}/auth/google/callback`;
-      const response = await fetch(`/api/auth/url?redirectUri=${encodeURIComponent(redirectUri)}`, { credentials: 'include' });
+      const response = await fetch('/api/auth/url', { credentials: 'include' });
       const { url } = await response.json();
       window.open(url, 'google_oauth', 'width=600,height=700');
     } catch (error) {
