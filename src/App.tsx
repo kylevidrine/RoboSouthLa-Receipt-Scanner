@@ -389,7 +389,7 @@ export default function App() {
         setView('gallery');
 
         // Fire-and-forget webhook — don't block the UI
-        fetch('https://n8n.robosouthla.com/webhook/scanner', {
+        fetch('https://n8n.robosouthla.com/webhook/receipt-app', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -440,7 +440,7 @@ export default function App() {
     console.log("Sending to webhook:", payload);
 
     try {
-      const response = await fetch('https://n8n.robosouthla.com/webhook/scanner', {
+      const response = await fetch('https://n8n.robosouthla.com/webhook/receipt-app', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
