@@ -401,9 +401,6 @@ export default function App() {
       const saved: Receipt = await response.json();
       console.log('[saveReceipt] saved receipt id:', saved.id);
 
-      // Download after confirmed save so it doesn't interrupt the fetch on iOS
-      downloadImage(capturedImage, name);
-
       setCapturedImage(null);
       setView('gallery');
 
@@ -483,13 +480,10 @@ export default function App() {
     }
   };
 
-  const downloadImage = (dataUrl: string, name: string) => {
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = `${name.replace(/\s+/g, '_')}.jpg`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const downloadImage = (dataUrl: string, _name: string) => {
+    // On iOS Safari, <a download> does not save to camera roll.
+    // Opening in a new tab lets the user long-press to save the image.
+    window.open(dataUrl, '_blank');
   };
 
   const handleLogin = async () => {
@@ -686,7 +680,7 @@ export default function App() {
                     <div className="p-5 rounded-full bg-white/20 backdrop-blur-xl border border-white/10 shadow-xl">
                       <ImageIcon size={32} />
                     </div>
-                    <span className="text-sm font-bold">Save</span>
+                    <span className="text-sm font-bold">Save Local</span>
                   </button>
                   <button
                     onClick={saveReceipt}
@@ -695,7 +689,7 @@ export default function App() {
                     <div className="p-5 rounded-full bg-blue-500 shadow-[0_0_20px_rgba(59,130,246,0.5)]">
                       <Check size={32} />
                     </div>
-                    <span className="text-sm font-bold">Keep</span>
+                    <span className="text-sm font-bold">Save & Upload</span>
                   </button>
                 </div>
               </div>
