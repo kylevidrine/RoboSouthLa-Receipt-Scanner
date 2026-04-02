@@ -539,14 +539,14 @@ export default function App() {
   }
 
   return (
-    <div className="flex flex-col h-[100dvh] bg-black text-white overflow-hidden safe-area-inset">
+    <div className="flex flex-col bg-black text-white overflow-hidden safe-area-inset" style={{ position: 'fixed', inset: 0, touchAction: 'none' }}>
       
       {/* Main Viewport */}
       <div className="relative flex-1 overflow-hidden">
         
         {/* Scanner View */}
         {view === 'scanner' && (
-          <div className="absolute inset-0 flex flex-col min-h-0">
+          <div className="absolute inset-0 flex flex-col min-h-0 overflow-hidden" style={{ touchAction: 'none' }}>
             {!capturedImage ? (
               <>
                 <video 
