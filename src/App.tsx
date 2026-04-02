@@ -613,7 +613,7 @@ export default function App() {
           transition={{ delay: 0.1 }}
           className="text-4xl font-bold mb-4 tracking-tight"
         >
-          RoboSouth LA AI Accountant
+          RoboSouthLA AI Accountant
         </motion.h1>
         <motion.p 
           initial={{ y: 20, opacity: 0 }}
