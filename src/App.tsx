@@ -370,19 +370,19 @@ export default function App() {
 
   const saveReceipt = async () => {
     if (!capturedImage || !user) return;
-    
-    const newReceipt = {
-      image: capturedImage,
-      name: `Receipt ${new Date().toLocaleDateString()}`
-    };
-    
+
+    const name = `Receipt ${new Date().toLocaleDateString()}`;
+    downloadImage(capturedImage, name);
+
+    const newReceipt = { image: capturedImage, name };
+
     try {
       const response = await authFetch('/api/receipts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newReceipt)
       });
-      
+
       if (response.ok) {
         setCapturedImage(null);
         setView('gallery');
