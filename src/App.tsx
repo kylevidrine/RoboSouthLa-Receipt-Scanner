@@ -19,6 +19,21 @@ interface GoogleUser {
   locale: string;
 }
 
+const TOKEN_KEY = 'receipt_jwt';
+
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
+
+function authFetch(input: string, init: RequestInit = {}) {
+  const token = getToken();
+  const headers: Record<string, string> = {
+    ...(init.headers as Record<string, string>),
+  };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return fetch(input, { ...init, headers });
+}
+
 export default function App() {
   const [user, setUser] = useState<GoogleUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -43,9 +58,17 @@ export default function App() {
 
   // Auth State
   useEffect(() => {
+    // Pick up JWT from redirect URL (?token=...) and save it
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get('token');
+    if (urlToken) {
+      localStorage.setItem(TOKEN_KEY, urlToken);
+      window.history.replaceState({}, '', '/');
+    }
+
     const checkAuth = async () => {
       try {
-        const response = await fetch('/api/auth/me', { credentials: 'include' });
+        const response = await authFetch('/api/auth/me');
         const data = await response.json();
         setUser(data.user);
       } catch (error) {
@@ -56,16 +79,6 @@ export default function App() {
     };
 
     checkAuth();
-
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data?.type === 'OAUTH_AUTH_SUCCESS') {
-        // Small delay to ensure cookie is settled
-        setTimeout(() => checkAuth(), 500);
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
   }, []);
 
   // Sync Receipts from API
@@ -77,7 +90,7 @@ export default function App() {
 
     const fetchReceipts = async () => {
       try {
-        const response = await fetch('/api/receipts', { credentials: 'include' });
+        const response = await authFetch('/api/receipts');
         if (response.ok) {
           const data = await response.json();
           setReceipts(data.sort((a: Receipt, b: Receipt) => b.timestamp - a.timestamp));
@@ -257,11 +270,10 @@ export default function App() {
     };
     
     try {
-      const response = await fetch('/api/receipts', {
+      const response = await authFetch('/api/receipts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newReceipt),
-        credentials: 'include'
+        body: JSON.stringify(newReceipt)
       });
       
       if (response.ok) {
@@ -275,9 +287,8 @@ export default function App() {
 
   const deleteReceipt = async (id: string) => {
     try {
-      const response = await fetch(`/api/receipts/${id}`, {
-        method: 'DELETE',
-        credentials: 'include'
+      const response = await authFetch(`/api/receipts/${id}`, {
+        method: 'DELETE'
       });
       
       if (response.ok) {
@@ -340,25 +351,18 @@ export default function App() {
 
   const handleLogin = async () => {
     try {
-      const response = await fetch('/api/auth/url', { credentials: 'include' });
+      const response = await fetch('/api/auth/url');
       const { url } = await response.json();
-      window.open(url, 'google_oauth', 'width=600,height=700');
+      window.location.href = url;
     } catch (error) {
       console.error("Login Error:", error);
     }
   };
 
   const handleLogout = async () => {
-    try {
-      await fetch('/api/auth/logout', { 
-        method: 'POST',
-        credentials: 'include'
-      });
-      setUser(null);
-      setView('scanner');
-    } catch (error) {
-      console.error("Logout Error:", error);
-    }
+    localStorage.removeItem(TOKEN_KEY);
+    setUser(null);
+    setView('scanner');
   };
 
   if (!authReady) {

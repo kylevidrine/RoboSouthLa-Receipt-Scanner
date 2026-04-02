@@ -1,17 +1,25 @@
-import "dotenv/config";
-import express from "express";
-import { createServer as createViteServer } from "vite";
+import dotenv from "dotenv";
 import path from "path";
+// Load base .env first, then override with environment-specific file
+dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), `.env.${process.env.NODE_ENV || 'development'}`), override: true });
+
+import express, { Request, Response, NextFunction } from "express";
+import { createServer as createViteServer } from "vite";
 import axios from "axios";
-import cookieSession from "cookie-session";
+import jwt from "jsonwebtoken";
 import fs from "fs";
 
 const app = express();
 const PORT = 3000;
-const REDIRECT_URI = "https://receipt.robosouthla.com/auth/google/callback";
 
-app.set("trust proxy", 1);
+const JWT_SECRET = process.env.JWT_SECRET || process.env.GOOGLE_CLIENT_SECRET || "fallback-secret-change-me";
+const REDIRECT_URI = process.env.REDIRECT_URI || 'https://receipt.robosouthla.com/auth/google/callback';
 
+// Trust reverse proxy (NGINX) for secure connections
+app.set('trust proxy', 1);
+
+// Simple local storage for receipts
 let receipts: any[] = [];
 const RECEIPTS_FILE = path.join(process.cwd(), "receipts.json");
 
@@ -32,17 +40,24 @@ const saveReceipts = () => {
 };
 
 app.use(express.json({ limit: "50mb" }));
-app.use(
-  cookieSession({
-    name: "session",
-    keys: [process.env.GOOGLE_CLIENT_SECRET || "robo-secret-key"],
-    maxAge: 24 * 60 * 60 * 1000,
-    secure: true,
-    sameSite: "lax",
-    httpOnly: true,
-  })
-);
 
+// JWT auth middleware
+function authenticateJWT(req: Request, res: Response, next: NextFunction) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const token = authHeader.slice(7);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as any;
+    (req as any).jwtUser = payload.user;
+    next();
+  } catch {
+    return res.status(401).json({ error: "Invalid or expired token" });
+  }
+}
+
+// OAuth Routes
 app.get("/api/auth/url", (req, res) => {
   const params = new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID!,
@@ -74,24 +89,10 @@ app.get(["/auth/google/callback", "/auth/google/callback/"], async (req, res) =>
       headers: { Authorization: `Bearer ${access_token}` },
     });
 
-    req.session!.user = userResponse.data;
-    console.log("Session set for user:", userResponse.data.email);
+    const user = userResponse.data;
+    const jwtToken = jwt.sign({ user }, JWT_SECRET, { expiresIn: "30d" });
 
-    res.send(`
-      <html>
-        <body>
-          <script>
-            if (window.opener) {
-              window.opener.postMessage({ type: 'OAUTH_AUTH_SUCCESS' }, '*');
-              window.close();
-            } else {
-              window.location.href = '/';
-            }
-          </script>
-          <p>Authentication successful. This window should close automatically.</p>
-        </body>
-      </html>
-    `);
+    res.redirect(`/?token=${encodeURIComponent(jwtToken)}`);
   } catch (error) {
     console.error("OAuth Error:", error);
     res.status(500).send("Authentication failed");
@@ -99,27 +100,37 @@ app.get(["/auth/google/callback", "/auth/google/callback/"], async (req, res) =>
 });
 
 app.get("/api/auth/me", (req, res) => {
-  console.log("Checking auth for session:", req.session?.user?.email || "No user");
-  res.json({ user: req.session?.user || null });
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    return res.json({ user: null });
+  }
+  const token = authHeader.slice(7);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET) as any;
+    res.json({ user: payload.user });
+  } catch {
+    res.json({ user: null });
+  }
 });
 
 app.post("/api/auth/logout", (req, res) => {
-  req.session = null;
+  // JWT is stateless; client drops the token
   res.json({ success: true });
 });
 
-app.get("/api/receipts", (req, res) => {
-  if (!req.session?.user) return res.status(401).json({ error: "Unauthorized" });
-  const userReceipts = receipts.filter((r) => r.uid === req.session!.user.id);
+// Receipt API Routes
+app.get("/api/receipts", authenticateJWT, (req, res) => {
+  const user = (req as any).jwtUser;
+  const userReceipts = receipts.filter((r) => r.uid === user.id);
   res.json(userReceipts);
 });
 
-app.post("/api/receipts", (req, res) => {
-  if (!req.session?.user) return res.status(401).json({ error: "Unauthorized" });
+app.post("/api/receipts", authenticateJWT, (req, res) => {
+  const user = (req as any).jwtUser;
   const newReceipt = {
     ...req.body,
     id: Math.random().toString(36).substr(2, 9),
-    uid: req.session!.user.id,
+    uid: user.id,
     timestamp: Date.now(),
   };
   receipts.push(newReceipt);
@@ -127,9 +138,9 @@ app.post("/api/receipts", (req, res) => {
   res.json(newReceipt);
 });
 
-app.delete("/api/receipts/:id", (req, res) => {
-  if (!req.session?.user) return res.status(401).json({ error: "Unauthorized" });
-  receipts = receipts.filter((r) => r.id !== req.params.id || r.uid !== req.session!.user.id);
+app.delete("/api/receipts/:id", authenticateJWT, (req, res) => {
+  const user = (req as any).jwtUser;
+  receipts = receipts.filter((r) => r.id !== req.params.id || r.uid !== user.id);
   saveReceipts();
   res.json({ success: true });
 });
