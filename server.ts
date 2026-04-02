@@ -45,6 +45,7 @@ app.use(
 
 // OAuth Routes
 app.get("/api/auth/url", (req, res) => {
+  console.log("ALL HEADERS:", JSON.stringify(req.headers, null, 2));
   const clientRedirectUri = req.query.redirectUri as string;
   
   // Robust fallback for redirectUri
