@@ -8,6 +8,17 @@ import { Camera, History, X, Check, Zap, ZapOff, RotateCcw, Image as ImageIcon, 
 import { motion, AnimatePresence } from 'motion/react';
 import { Receipt, Point } from './types';
 
+// Order 4 points as [top-left, top-right, bottom-right, bottom-left]
+function orderPoints(pts: Point[]): [Point, Point, Point, Point] {
+  const sums  = pts.map(p => p.x + p.y);
+  const diffs = pts.map(p => p.x - p.y);
+  const tl = pts[sums.indexOf(Math.min(...sums))];
+  const br = pts[sums.indexOf(Math.max(...sums))];
+  const tr = pts[diffs.indexOf(Math.max(...diffs))];
+  const bl = pts[diffs.indexOf(Math.min(...diffs))];
+  return [tl, tr, br, bl];
+}
+
 interface GoogleUser {
   id: string;
   email: string;
@@ -60,6 +71,8 @@ export default function App() {
   const streamRef = useRef<MediaStream | null>(null);
   // Off-screen canvas used for OpenCV processing (scaled down for perf)
   const procCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Corners detected by OpenCV at time of capture (overlay canvas coordinates)
+  const capturedCornersRef = useRef<Point[] | null>(null);
 
   // Wait for OpenCV.js WASM to finish initializing
   useEffect(() => {
@@ -302,6 +315,7 @@ export default function App() {
           ctx.setLineDash([]);
 
           if (stable && !captureCalled) {
+            capturedCornersRef.current = bestCorners;
             captureCalled = true;
             handleCapture();
           }
@@ -356,8 +370,78 @@ export default function App() {
         setIsProcessing(true);
 
         setTimeout(() => {
-          const finalDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+          let finalDataUrl = canvas.toDataURL('image/jpeg', 0.9);
 
+          // Apply perspective crop if we have corner points
+          const cv = (window as any).cv;
+          const corners = capturedCornersRef.current;
+          const overlay = overlayCanvasRef.current;
+
+          if (cv && corners && overlay && overlay.width > 0 && overlay.height > 0) {
+            try {
+              const PADDING = 15; // px in full-res video coords
+
+              // Map corners from overlay display coords → full-res video coords
+              const sx = video.videoWidth  / overlay.width;
+              const sy = video.videoHeight / overlay.height;
+              const videoPts = corners.map(p => ({ x: p.x * sx, y: p.y * sy }));
+
+              const [tl, tr, br, bl] = orderPoints(videoPts);
+
+              // Expand each corner outward by PADDING pixels
+              const cx = (tl.x + tr.x + br.x + bl.x) / 4;
+              const cy = (tl.y + tr.y + br.y + bl.y) / 4;
+              const pad = (pt: Point): Point => {
+                const dx = pt.x - cx;
+                const dy = pt.y - cy;
+                const len = Math.hypot(dx, dy) || 1;
+                return {
+                  x: Math.max(0, Math.min(video.videoWidth  - 1, pt.x + (dx / len) * PADDING)),
+                  y: Math.max(0, Math.min(video.videoHeight - 1, pt.y + (dy / len) * PADDING)),
+                };
+              };
+              const [ptl, ptr, pbr, pbl] = [pad(tl), pad(tr), pad(br), pad(bl)];
+
+              const maxW = Math.round(Math.max(
+                Math.hypot(ptr.x - ptl.x, ptr.y - ptl.y),
+                Math.hypot(pbr.x - pbl.x, pbr.y - pbl.y),
+              ));
+              const maxH = Math.round(Math.max(
+                Math.hypot(pbl.x - ptl.x, pbl.y - ptl.y),
+                Math.hypot(pbr.x - ptr.x, pbr.y - ptr.y),
+              ));
+
+              if (maxW > 50 && maxH > 50) {
+                const srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                  ptl.x, ptl.y,
+                  ptr.x, ptr.y,
+                  pbr.x, pbr.y,
+                  pbl.x, pbl.y,
+                ]);
+                const dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                  0,        0,
+                  maxW - 1, 0,
+                  maxW - 1, maxH - 1,
+                  0,        maxH - 1,
+                ]);
+
+                const M   = cv.getPerspectiveTransform(srcPts, dstPts);
+                const src = cv.imread(canvas);
+                const dst = new cv.Mat();
+                cv.warpPerspective(src, dst, M, new cv.Size(maxW, maxH));
+
+                const warpCanvas = document.createElement('canvas');
+                cv.imshow(warpCanvas, dst);
+                finalDataUrl = warpCanvas.toDataURL('image/jpeg', 0.9);
+
+                srcPts.delete(); dstPts.delete(); M.delete(); src.delete(); dst.delete();
+              }
+            } catch (err) {
+              console.error('Perspective warp error:', err);
+            }
+          }
+
+          capturedCornersRef.current = null;
           setCapturedImage(finalDataUrl);
           setIsProcessing(false);
           setIsCapturing(false);
