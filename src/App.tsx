@@ -384,8 +384,22 @@ export default function App() {
       });
 
       if (response.ok) {
+        const saved: Receipt = await response.json();
         setCapturedImage(null);
         setView('gallery');
+
+        // Fire-and-forget webhook — don't block the UI
+        fetch('https://n8n.robosouthla.com/webhook/scanner', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: user.email,
+            username: user.name,
+            image: saved.image,
+            timestamp: saved.timestamp,
+            receiptId: saved.id,
+          }),
+        }).catch(err => console.error('Webhook error:', err));
       }
     } catch (error) {
       console.error("Error saving receipt:", error);
