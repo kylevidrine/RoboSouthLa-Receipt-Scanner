@@ -9,8 +9,7 @@ import fs from "fs";
 const app = express();
 const PORT = 3000;
 
-// Trust reverse proxy (NGINX) for secure connections
-app.set('trust proxy', 1);
+app.set("trust proxy", 1);
 
 // Simple local storage for receipts (in-memory for now, could use a file)
 let receipts: any[] = [];
@@ -36,10 +35,10 @@ app.use(express.json({ limit: "50mb" }));
 app.use(
   cookieSession({
     name: "session",
-    keys: [process.env.GOOGLE_CLIENT_SECRET || "secret-key"],
+    keys: [process.env.GOOGLE_CLIENT_SECRET || "robo-secret-key"],
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    secure: true,
-    sameSite: "none",
+    secure: true, // Always true since we're behind a proxy with SSL
+    sameSite: "none", // Required for AI Studio iframe, works for standalone too
     httpOnly: true,
   })
 );
@@ -47,7 +46,12 @@ app.use(
 // OAuth Routes
 app.get("/api/auth/url", (req, res) => {
   const clientRedirectUri = req.query.redirectUri as string;
-  const redirectUri = clientRedirectUri || `${process.env.APP_URL}/auth/google/callback`;
+  
+  // Robust fallback for redirectUri
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  const fallbackRedirectUri = `${protocol}://${host}/auth/google/callback`;
+  const redirectUri = clientRedirectUri || fallbackRedirectUri;
   
   // Store the redirectUri in the session to use it in the callback
   if (req.session) {
@@ -71,9 +75,18 @@ app.get("/api/auth/url", (req, res) => {
 
 app.get(["/auth/google/callback", "/auth/google/callback/"], async (req, res) => {
   const { code } = req.query;
-  const redirectUri = req.session?.oauthRedirectUri || `${process.env.APP_URL}/auth/google/callback`;
+  
+  // Robust fallback for redirectUri if session is lost
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.headers["x-forwarded-host"] || req.get("host");
+  const fallbackRedirectUri = `${protocol}://${host}/auth/google/callback`;
+  const redirectUri = req.session?.oauthRedirectUri || fallbackRedirectUri;
 
   console.log("Handling Callback with redirectUri:", redirectUri);
+
+  if (!req.session) {
+    console.error("CRITICAL: req.session is undefined in OAuth callback. Check cookie-session config.");
+  }
 
   try {
     const tokenResponse = await axios.post("https://oauth2.googleapis.com/token", {
