@@ -175,8 +175,8 @@ export default function App() {
     let lastCorners: Point[] | null = null;
     let captureCalled = false;
 
-    const STABLE_FRAMES = 20;
-    const STABILITY_PX = 20; // max per-corner drift to count as stable
+    const STABLE_FRAMES = 40;
+    const STABILITY_PX = 40; // max per-corner drift to count as stable
 
     const drawGuide = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
       const m = w * 0.08;
