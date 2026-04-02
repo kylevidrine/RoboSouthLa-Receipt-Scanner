@@ -34,6 +34,17 @@ function authFetch(input: string, init: RequestInit = {}) {
   return fetch(input, { ...init, headers });
 }
 
+// Order 4 points as [top-left, top-right, bottom-right, bottom-left]
+function orderPoints(pts: Point[]): [Point, Point, Point, Point] {
+  const sums  = pts.map(p => p.x + p.y);
+  const diffs = pts.map(p => p.x - p.y);
+  const tl = pts[sums.indexOf(Math.min(...sums))];
+  const br = pts[sums.indexOf(Math.max(...sums))];
+  const tr = pts[diffs.indexOf(Math.max(...diffs))];
+  const bl = pts[diffs.indexOf(Math.min(...diffs))];
+  return [tl, tr, br, bl];
+}
+
 export default function App() {
   const [user, setUser] = useState<GoogleUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -59,6 +70,8 @@ export default function App() {
   const streamRef = useRef<MediaStream | null>(null);
   // Off-screen canvas used for OpenCV processing (scaled down for perf)
   const procCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // Corners detected by OpenCV at time of capture (overlay canvas coordinates)
+  const capturedCornersRef = useRef<Point[] | null>(null);
 
   // Wait for OpenCV.js WASM to finish initializing
   useEffect(() => {
@@ -301,6 +314,7 @@ export default function App() {
           ctx.setLineDash([]);
 
           if (stable && !captureCalled) {
+            capturedCornersRef.current = bestCorners;
             captureCalled = true;
             handleCapture();
           }
@@ -331,9 +345,9 @@ export default function App() {
 
   const handleCapture = () => {
     if (isCapturing || capturedImage || isProcessing) return;
-    
+
     setIsCapturing(true);
-    
+
     const flash = document.createElement('div');
     flash.className = 'fixed inset-0 bg-white z-[100] opacity-0 transition-opacity duration-100';
     document.body.appendChild(flash);
@@ -351,15 +365,70 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       if (ctx) {
         ctx.drawImage(video, 0, 0);
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
-        
+
         setIsProcessing(true);
-        
+
         setTimeout(() => {
-          setCapturedImage(dataUrl);
+          let finalDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+
+          // Apply perspective crop if we have corner points
+          const cv = (window as any).cv;
+          const corners = capturedCornersRef.current;
+          const overlay = overlayCanvasRef.current;
+
+          if (cv && corners && overlay && overlay.width > 0 && overlay.height > 0) {
+            try {
+              // Map corners from overlay display coords → full-res video coords
+              const sx = video.videoWidth  / overlay.width;
+              const sy = video.videoHeight / overlay.height;
+              const videoPts = corners.map(p => ({ x: p.x * sx, y: p.y * sy }));
+
+              const [tl, tr, br, bl] = orderPoints(videoPts);
+
+              const maxW = Math.round(Math.max(
+                Math.hypot(tr.x - tl.x, tr.y - tl.y),
+                Math.hypot(br.x - bl.x, br.y - bl.y),
+              ));
+              const maxH = Math.round(Math.max(
+                Math.hypot(bl.x - tl.x, bl.y - tl.y),
+                Math.hypot(br.x - tr.x, br.y - tr.y),
+              ));
+
+              if (maxW > 50 && maxH > 50) {
+                const srcPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                  tl.x, tl.y,
+                  tr.x, tr.y,
+                  br.x, br.y,
+                  bl.x, bl.y,
+                ]);
+                const dstPts = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                  0,        0,
+                  maxW - 1, 0,
+                  maxW - 1, maxH - 1,
+                  0,        maxH - 1,
+                ]);
+
+                const M   = cv.getPerspectiveTransform(srcPts, dstPts);
+                const src = cv.imread(canvas);
+                const dst = new cv.Mat();
+                cv.warpPerspective(src, dst, M, new cv.Size(maxW, maxH));
+
+                const warpCanvas = document.createElement('canvas');
+                cv.imshow(warpCanvas, dst);
+                finalDataUrl = warpCanvas.toDataURL('image/jpeg', 0.9);
+
+                srcPts.delete(); dstPts.delete(); M.delete(); src.delete(); dst.delete();
+              }
+            } catch (err) {
+              console.error('Perspective warp error:', err);
+            }
+          }
+
+          capturedCornersRef.current = null;
+          setCapturedImage(finalDataUrl);
           setIsProcessing(false);
           setIsCapturing(false);
-          
+
           if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
           }
